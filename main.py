@@ -10,8 +10,10 @@ from datetime import datetime, timezone
 from dotenv import load_dotenv
 from flask import Flask
 from threading import Thread
-from textblob import TextBlob
+from textblob import TextBlob  # For sentiment analysis
+from difflib import SequenceMatcher  # For memory matching
 
+# Initialize Flask app
 app = Flask(__name__)
 
 @app.route('/')
@@ -45,7 +47,7 @@ intents = discord.Intents.all()
 client = discord.Client(intents=intents)
 
 bot_name = "Nova"
-
+human_name = "Nova"
 
 def load_blocked_channels():
     if not os.path.exists(BLOCKED_CHANNELS_FILE):
@@ -80,6 +82,16 @@ def save_memory(mem):
 
 memory = load_memory()
 
+def find_similar_past_response(message, threshold=0.8):
+    best_match = None
+    best_score = 0
+    for convo in memory["convos"]:
+        score = SequenceMatcher(None, convo["message"], message).ratio()
+        if score > best_score and score >= threshold:
+            best_match = convo["response"]
+            best_score = score
+    return best_match
+
 def get_headers():
     return {
         "Authorization": f"Bearer {OPENROUTER_API_KEY}",
@@ -98,9 +110,9 @@ async def generate_response(prompt):
         if res.status_code == 200:
             return res.json()['choices'][0]['message']['content'].strip()
         else:
-            return "idk lol"
+            return "Not sure how to answer that."
     except:
-        return "gotta bounce rn"
+        return "Error reaching my brain, try later."
 
 async def simulate_typing(channel, msg):
     delay = max(len(msg.split()) * 2, 1.2)
@@ -123,7 +135,7 @@ def detect_mood(message):
 
 @client.event
 async def on_ready():
-    print(f"{bot_name} is online")
+    print(f"{bot_name} online")
     await client.change_presence(status=discord.Status.online, activity=discord.Game(name="just chillin"))
 
 @client.event
@@ -137,20 +149,20 @@ async def on_message(message):
     channel_id = message.channel.id
     response = None
 
-    if message.content.startswith("!novablock") and str(message.author.id) == OWNER_ID:
+    if message.content.startswith("!arenblock") and str(message.author.id) == OWNER_ID:
         if channel_id not in blocked_channels:
             blocked_channels.append(channel_id)
             save_blocked_channels(blocked_channels)
-            await message.channel.send("🔕 Nova won't reply here anymore.")
+            await message.channel.send("🔕 Nova is now blocked from this channel.")
         else:
             await message.channel.send("Already blocked.")
         return
 
-    elif message.content.startswith("!novaunblock") and str(message.author.id) == OWNER_ID:
+    elif message.content.startswith("!arenunblock") and str(message.author.id) == OWNER_ID:
         if channel_id in blocked_channels:
             blocked_channels.remove(channel_id)
             save_blocked_channels(blocked_channels)
-            await message.channel.send("✅ Nova is back in this channel.")
+            await message.channel.send("✅ Nova is now unblocked from this channel.")
         else:
             await message.channel.send("Not blocked.")
         return
@@ -158,22 +170,22 @@ async def on_message(message):
     if channel_id in blocked_channels:
         return
 
-    if "alex" in msg and bot_name.lower() not in msg:
-        response = f"nah, it's just {bot_name}."
+    if human_name.lower() in msg and bot_name.lower() not in msg:
+        response = f"nah i'm {bot_name}"
         await message.channel.send(response)
 
     elif "join vc" in msg or "join call" in msg:
         if message.author.voice and message.author.voice.channel:
             try:
                 await message.author.voice.channel.connect()
-                response = "aight, i'm in."
+                response = "yo i'm in"
             except:
-                response = "can't join right now."
+                response = "can't join rn"
         if response:
             await message.channel.send(response)
 
     elif "discord.gg" in msg:
-        response = "drop the link."
+        response = "bet, drop the link"
         await message.channel.send(response)
 
     else:
@@ -183,19 +195,26 @@ async def on_message(message):
         now = datetime.now(timezone.utc)
         last_focus_time = client.focus_users.get(user_id)
         is_recent_focus = last_focus_time and (now - last_focus_time).total_seconds() < 180
-        mentioned_bot = bot_name.lower() in msg or client.user.mentioned_in(message)
+        mentioned_bot = bot_name.lower() in msg or human_name.lower() in msg or client.user.mentioned_in(message)
 
-        if mentioned_bot or is_recent_focus or msg.startswith(bot_name.lower()):
+        if mentioned_bot or is_recent_focus or msg.startswith(bot_name.lower()) or msg.startswith(human_name.lower()):
             client.focus_users[user_id] = now
+
             mood = detect_mood(msg)
-            prompt = f"You're {bot_name}, a chill guy. Be relaxed and real. No emojis. Short replies. Respond to: {msg} in a {mood} tone."
-            response = await generate_response(prompt)
+            cached_response = find_similar_past_response(msg)
+
+            if cached_response:
+                response = cached_response + " (from memory)"
+            else:
+                prompt = f"You're {bot_name}, a chill US dude. Talk like you're relaxed and real. Short replies, no emojis. Reply to: {msg}. Use a {mood} tone."
+                response = await generate_response(prompt)
+
             if response:
                 await simulate_typing(message.channel, response)
                 await message.channel.send(response)
 
         elif random.random() < 0.1:
-            response = await generate_response(f"React casually to: {msg}")
+            response = await generate_response(f"React casually like a real dude. Respond to: {msg}")
             if response:
                 await simulate_typing(message.channel, response)
                 await message.channel.send(response)
@@ -212,9 +231,9 @@ async def on_message(message):
 async def on_voice_state_update(member, before, after):
     if member == client.user:
         if after.channel:
-            print(f"{bot_name} joined VC: {after.channel.name}")
+            print(f"{human_name} joined VC: {after.channel.name}")
         elif before.channel:
-            print(f"{bot_name} left VC: {before.channel.name}")
+            print(f"{human_name} left VC: {before.channel.name}")
 
 threading.Thread(target=run).start()
 
